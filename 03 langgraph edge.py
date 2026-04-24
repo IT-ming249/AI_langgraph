@@ -11,6 +11,7 @@ class State(BaseModel):
     username: str
     calls: str | None = None
 
+# 这是routing function, 不是具体节点
 def vip_entry(state: State, config: RunnableConfig):
     vip_level = config["configurable"]["vip_level"]
     if vip_level == 1:
