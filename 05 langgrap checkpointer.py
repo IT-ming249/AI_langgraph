@@ -33,4 +33,12 @@ graph = builder.compile(checkpointer=checkpointer)
 
 config = {"configurable": {"thread_id": "1"}}
 response = graph.invoke({"username": ""}, config)
-print(response)
+print(response, end="\n\n")
+
+# 获取最近一次的状态
+# lastest_state = graph.get_state(config)
+# print(lastest_state)
+
+# 获取历史状态
+for state_snapshot in graph.get_state_history(config):
+    print(state_snapshot, end="\n\n")
