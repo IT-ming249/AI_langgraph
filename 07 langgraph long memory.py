@@ -60,7 +60,7 @@ with (
         config
     )
 
-    # 开启新的对话，同一用户
+    # 开启新的对话，同一用户， thread_id 是持久化的，重启程序后仍然有效
     config = {
         "configurable": {
             "thread_id": "2",
