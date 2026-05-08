@@ -1,4 +1,6 @@
 import os
+
+from pycparser.c_ast import While
 from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, START, END
@@ -18,7 +20,7 @@ from llm import model
 
 知识点2
 node_a -> node_b(写文件、interrrupt)
-● StateGraph（Graph API）：恢复的起点是“上次停止所在的那个 node 的开头”
+● StateGraph（Graph API）：恢复的起点是“上次停止所在的那个 node 的开头”，通过知识点1可以规避重新写（或其它操作）
 ● Functional API：恢复的起点是“entrypoint 的开头”
 ● 子图：如果 node 内部调用了 subgraph，停止点在 subgraph 中时，父图可能从“调用 subgraph 的父 node”开始重放
 因此：node 开头到 interrupt/异常之前的代码，可能会在恢复时再次执行。如果这些代码包含副作用，就会造成重复写入/重复扣费/重复请求等风险。
@@ -53,7 +55,7 @@ def write_joke(content: str):
 
 def topic_joke_node(state: State):
     """
-    人机交互节点：暂停，等待人类给出最终文本。
+    模拟人机交互节点：暂停，等待人类给出最终文本。
     注意：恢复后会从该函数开头重放，所以把副作用放到 task 更安全。
     """
 
@@ -61,3 +63,52 @@ def topic_joke_node(state: State):
     topic = interrupt(f"我现在需要你输入一个笑话主题。")
     t = write_joke(topic)
     result = t.result()
+    if not result:
+        raise RuntimeError("笑话主题写入失败")
+
+    # 2. 获取笑话，并交给用户审核后写入文件
+    while True:
+        joke = model.invoke(f"请生成一个关于“{topic}”的笑话。")
+        option = interrupt(f"请审核并确认以下笑话是否正确：\n{joke.content}\n 审核通过输入1，不通过输入2")
+        if option == "1":
+            t = write_joke(joke.content)
+            result = t.result()
+            if not result:
+                raise RuntimeError("笑话写入失败")
+            break
+
+    return {"topic": topic, "joke": joke}
+
+
+def main():
+    DB_URI = "postgresql://postgres:123456@127.0.0.1:5432/agent_chat_history"
+    with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+        builder = StateGraph(State)
+        builder.add_node("topic_joke_node", topic_joke_node)
+        builder.add_edge(START, "topic_joke_node")
+        builder.add_edge("topic_joke_node", END)
+        graph = builder.compile(checkpointer=checkpointer)
+
+        # 同一个 thread_id才能续跑同一个执行实例
+        # thread_id；生产请用业务ID或 uuid
+        config = {
+            "configurable": {
+                "thread_id": "11",
+            }
+        }
+        result = graph.invoke({}, config=config, durability="sync")
+
+        while True:
+            if "__interrupt__" in result:
+                graph_message = result["__interrupt__"][0].value
+                print(graph_message)
+                user_input = input("请输入：")
+                # 恢复执行，把用户输入的内容通过Command(resume=...)传回去
+                result = graph.invoke(Command(resume=user_input), config=config, durability="sync")
+            else:
+                print(result)
+                break
+
+
+if __name__ == '__main__':
+    main()
